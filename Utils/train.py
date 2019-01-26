@@ -40,6 +40,68 @@ def train(net, data_loader, test_loader, optimizer, criterion, n_epochs, classes
         #plt.plot(losses)
         #plt.show()
     return train_accuracy, test_accuracy
+
+
+def train_entropic(net1,
+                   net2,
+                   data_loader, 
+                   test_loader, 
+                   optimizer1,
+                   optimizer2, 
+                   criterion, 
+                   n_epochs, 
+                   classes=None, 
+                   verbose=False, 
+                   class_number=None):
+    
+    losses1 = []
+    losses2 = []
+    for epoch in range(n_epochs):
+        net1.train()
+        net2.train()
+        for i, batch in enumerate(data_loader):
+
+            imgs, labels = batch
+
+            # redact class_number by retraining  turn everything class_number black
+            # introduce new label as zero clobber zero class
+            labels1 = labels * (1 - labels.eq(class_number)).long()
+
+            # mask out images in class 0 
+            imgs1 = imgs *  torch.ones( imgs.size() )
+            imgs1 = torch.mm(torch.diag((1.0-labels1.eq(0))).float(), imgs1.view(imgs.size()[0],-1))
+            imgs1 = imgs1.view(imgs.size())
+            
+            imgs1, labels1 = imgs1.to(device), labels1.to(device)
+            imgs, labels = imgs.to(device), labels.to(device)
+            
+            optimizer1.zero_grad()
+            outputs1 = net1(imgs1)
+            loss1 = criterion(outputs1, labels1)
+            loss1.backward()
+            optimizer1.step()
+            losses1.append(loss1.item())
+            
+
+            
+
+            optimizer2.zero_grad()
+            outputs2 = net2(imgs)
+            loss2 = criterion(outputs2, labels)
+            loss2.backward()
+            optimizer2.step()
+            losses2.append(loss2.item())
+
+
+
+    # evaluate performance on testset at the end of each epoch
+    print("[%d/%d]" %(epoch, n_epochs))
+    print("Training:")
+    train_accuracy = eval_target_net_entropic(net1, net2, data_loader, classes=classes, class_number=class_number)
+    print("Test:")
+    test_accuracy = eval_target_net_entropic(net1, net2, test_loader, classes=classes, class_number=class_number)
+            
+    return train_accuracy, test_accuracy
         
 def train_attacker(attack_net, shadow, shadow_train, shadow_out, optimizer, criterion, n_epochs, k):
     

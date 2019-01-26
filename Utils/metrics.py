@@ -45,6 +45,211 @@ def eval_target_net(net, testloader, classes=None):
     
     return accuracy
 
+
+
+def eval_target_net_entropic(model1=None, model2=None, data_loader=None, classes=None, alpha=1.001, class_number=None):
+    """
+    Function to evaluate a target model provided
+    specified data sets.
+
+    Parameters
+    ----------
+    model       : Module
+                  PyTorch conforming nn.Module function
+    data_loader : DataLoader
+                  PyTorch dataloader function
+    classes     : list
+                  list of classes
+    alpha       : float
+                  parameter of Renyi Entropy
+    Returns
+    -------
+    accuracy    : float
+                  accuracy of target model
+    """
+
+    if classes is not None:
+        n_classes = len(classes)
+        class_correct1 = np.zeros(n_classes)
+        class_total1 = np.zeros(n_classes)
+        average_entropy_per_class1 = np.zeros(n_classes)
+        class_correct2 = np.zeros(n_classes)
+        class_total2 = np.zeros(n_classes)
+        average_entropy_per_class2 = np.zeros(n_classes)
+    class_label = 0
+
+    total1 = 0
+    correct1 = 0
+    total_entropy1 = 0
+    total_entropy_correct1 = 0
+    total_entropy_wrong1 = 0
+    total2 = 0
+    correct2 = 0
+    total_entropy2 = 0
+    total_entropy_correct2 = 0
+    total_entropy_wrong2 = 0
+
+    total_entropy_correct_squared1 = 0
+    total_entropy_wrong_squared1 = 0
+    total_entropy_squared1 = 0
+    total_entropy_correct_squared2 = 0
+    total_entropy_wrong_squared2 = 0
+    total_entropy_squared2 = 0
+
+    with torch.no_grad():
+        model1.eval()
+        model2.eval()
+        for i, (imgs, lbls) in enumerate(data_loader):
+
+            
+            # redact images belonging to class number
+            # introduce new label as zero
+            lbls1 = (lbls-1) * (lbls.gt(class_number)).long() + (lbls) * (1 - lbls.ge(class_number)).long()
+
+            # mask out images in class_number
+            imgs1 = imgs * torch.ones( imgs.size() )
+            imgs1 = torch.mm(torch.diag((1.0-lbls1.eq(0))).float(), imgs1.view(imgs.size()[0],-1))
+            imgs1 = imgs1.view(imgs.size())
+            imgs1, lbls1 = imgs1.to(device), lbls1.to(device)
+            
+            
+
+            #shift do to argmax
+            lbls2 = (lbls-1) * (lbls.gt(class_number)).long() + (lbls) * (1 - lbls.ge(class_number)).long() 
+                   
+            imgs2, lbls2 = imgs.to(device), lbls2.to(device)
+            
+
+
+            output1 = model1(imgs1)
+          
+            output2 = model2(imgs2)
+
+            # truncate redaction
+            a = [j for j in range(n_classes)]
+            a.remove(class_number)
+            
+            output1 = output1[:,a]
+            output2 = output2[:,a]
+            
+
+            # print the renyi entropy of the probability distribution
+            # H_a = 1/(1-a) log_i ( sum p_i^a)
+            # convert to probabilities:  
+
+            # normalize out put to probabilities 
+
+            normalized_output1 = torch.softmax(output1, dim=1)
+            normalized_output2 = torch.softmax(output2, dim=1)
+           
+            
+            #renyi_entropy = (normalized_output  * normalized_output.log()).sum(dim=1)
+            renyi_entropy1 = 1/(1-alpha) * ((torch.pow(normalized_output1, alpha)).sum(dim=1)).log()
+            renyi_entropy2 = 1/(1-alpha) * ((torch.pow(normalized_output2, alpha)).sum(dim=1)).log()
+            
+            renyi_entropy_squared1 = renyi_entropy1 * renyi_entropy1
+            renyi_entropy_squared2 = renyi_entropy2 * renyi_entropy2
+
+
+            predicted1 = output1.argmax(dim=1)
+            total1 += imgs.size(0)
+            correct1 += predicted1.eq(lbls1).sum().item()
+            total_entropy_correct1 += ((predicted1.eq(lbls1)).float() * renyi_entropy1).sum()
+            total_entropy_wrong1 += ((1 - (predicted1.eq(lbls1)).float()) * renyi_entropy1).sum()
+            total_entropy1 += renyi_entropy1.sum()
+            total_entropy_correct_squared1 += ((predicted1.eq(lbls1)).float() * renyi_entropy_squared1).sum()
+            total_entropy_wrong_squared1 += ((1 - (predicted1.eq(lbls1)).float()) * renyi_entropy_squared1).sum()
+            total_entropy_squared1 += renyi_entropy_squared1.sum()
+
+
+            predicted2 = output2.argmax(dim=1)
+            total2 += imgs.size(0)
+            correct2 += predicted2.eq(lbls2).sum().item()
+            total_entropy_correct2 += ((predicted1.eq(lbls2)).float() * renyi_entropy2).sum()
+            total_entropy_wrong2 += ((1 - (predicted2.eq(lbls2)).float()) * renyi_entropy2).sum()
+            total_entropy2 += renyi_entropy2.sum()
+            total_entropy_correct_squared2 += ((predicted2.eq(lbls2)).float() * renyi_entropy_squared2).sum()
+            total_entropy_wrong_squared2 += ((1 - (predicted2.eq(lbls2)).float()) * renyi_entropy_squared2).sum()
+            total_entropy_squared2 += renyi_entropy_squared2.sum()
+
+
+
+            #print(renyi_entropy)
+            #print(predicted)
+            #print(lbls)
+
+            if classes is not None:
+                for entropy, prediction, lbl in zip(renyi_entropy1, predicted1, lbls1):
+                    class_correct1[lbl] += (prediction == lbl).item()
+                    class_total1[lbl] += 1
+                    average_entropy_per_class1[lbl] += entropy.item()
+                for entropy, prediction, lbl in zip(renyi_entropy2, predicted2, lbls2):
+                    class_correct2[lbl] += (prediction == lbl).item()
+                    class_total2[lbl] += 1
+                    average_entropy_per_class2[lbl] += entropy.item()
+            
+      
+        #average_entropy_per_class = average_entropy_per_class 
+               
+
+                    
+    accuracy1 = 100*(correct1/total1)
+    average_entropy_correct1 = total_entropy_correct1/correct1
+    average_entropy_wrong1 = total_entropy_wrong1/(total1 - correct1)
+    average_entropy1 = total_entropy1/total1
+    std_entropy1 = torch.sqrt(total_entropy_squared1 / total1 - average_entropy1 * average_entropy1)
+    std_entropy_correct1 = torch.sqrt(total_entropy_correct_squared1 / correct1- average_entropy_correct1 * average_entropy_correct1)
+    std_entropy_wrong1 = torch.sqrt(total_entropy_wrong_squared1 / (total1 - correct1)- average_entropy_wrong1 * average_entropy_wrong1)
+    if classes is not None:
+        for i in range(1,len(classes)):
+            if i == class_number:
+                print(classes[i] + " redacted\n")
+                continue
+            if i < class_number:
+                shift = 0
+            if i > class_number:
+                shift = 1 
+            
+            print('{} Accuracy of {}/{} : {:.3f} % average entropy {:.3f}'
+                  .format(classes[i], class_correct1[i-shift] , class_total1[i-shift],
+                          100 * class_correct1[i-shift] / class_total1[i-shift], 
+                          average_entropy_per_class1[i-shift]/ class_total1[i-shift] ))
+
+    print("\n Accuracy = {:.2f} %\nAverage Entropy (correct,wrong,total) = ({:.3f},{:.3f},{:.3f})\n\n".format(
+         accuracy1, average_entropy_correct1, average_entropy_wrong1, average_entropy1))
+    print("std (correct,wrong,total) = ({:.3f},{:.3f},{:.3f})\n".format(std_entropy_correct1, std_entropy_wrong1, std_entropy1))
+
+
+
+    accuracy2 = 100*(correct2/total2)
+    average_entropy_correct2 = total_entropy_correct2/correct2
+    average_entropy_wrong2 = total_entropy_wrong2/(total2 - correct2)
+    average_entropy2 = total_entropy2/total2
+    std_entropy2 = torch.sqrt(total_entropy_squared2 / total2 - average_entropy2 * average_entropy2)
+    std_entropy_correct2 = torch.sqrt(total_entropy_correct_squared2 / correct2 - average_entropy_correct2 * average_entropy_correct2)
+    std_entropy_wrong2 = torch.sqrt(total_entropy_wrong_squared2 / (total2 - correct2) - average_entropy_wrong2 * average_entropy_wrong2)
+    if classes is not None:
+        for i in range(1,len(classes)):
+            if i == class_number:
+                print(classes[i] + " redacted\n")
+                continue
+            if i < class_number:
+                shift = 0
+            if i > class_number:
+                shift = 1 
+            print('{} Accuracy of {}/{} : {:.3f} % average entropy {:.3f}'
+                  .format(classes[i], class_correct2[i-shift] , class_total2[i-shift],
+                          100 * class_correct2[i-shift] / class_total2[i-shift], 
+                          average_entropy_per_class2[i-shift]/ class_total2[i-shift] ))
+
+    print("\n Accuracy = {:.2f} %\nAverage Entropy (correct,wrong,total) = ({:.3f},{:.3f},{:.3f})\n\n".format(
+         accuracy2, average_entropy_correct2, average_entropy_wrong2, average_entropy2))
+    print("std (correct,wrong,total) = ({:.3f},{:.3f},{:.3f})\n".format(std_entropy_correct2, std_entropy_wrong2, std_entropy2))
+
+    return accuracy1
+
+    
+
 def eval_attack_net(attack_net, target, target_train, target_out, k):
     """Assess accuracy, precision, and recall of attack model for in training set/out of training set classification.
     Edited for use with SVCs."""
